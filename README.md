@@ -33,6 +33,8 @@
 
 2011–2024 API 分年控制器已启动，尚在采集中；运行边界见 [全历史回填进度](docs/research/rtms-full-backfill-progress-2026-09-14.md)。
 
+历史 API 回填已全部完成，近期线已补跑第三个完整版本；最新真实状态、失败记录和下一步见 [2026-09-28 管道状态](docs/research/data-pipeline-status-2026-09-28.md)。
+
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m worldmodel_data validate
