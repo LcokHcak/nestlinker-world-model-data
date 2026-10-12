@@ -308,6 +308,8 @@ def verify_archive(archive: Path, root_name: str, inventory: list, checksums: li
         expected_names = {root_name + "/" + path for path in expected_hashes} | {root_name + "/SHA256SUMS.txt"}
         if len(names) != len(set(names)) or set(names) != expected_names:
             raise ValueError("archive membership differs from allowlisted package files")
+        if bundle.read(root_name + "/SHA256SUMS.txt") != ("\n".join(checksums) + "\n").encode("utf-8"):
+            raise ValueError("archive checksum list differs from verified package inventory")
         for path, expected in expected_hashes.items():
             digest, line_count = hashlib.sha256(), 0
             with bundle.open(root_name + "/" + path) as handle:

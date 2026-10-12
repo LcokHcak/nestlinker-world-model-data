@@ -1,9 +1,10 @@
 import unittest
 import hashlib
+import json
 import tempfile
 import zipfile
 from pathlib import Path
-from scripts.build_rtms_share_package import scope_from_run, verify_archive
+from scripts.build_rtms_share_package import scope_from_run, verify_archive, select_scopes
 
 
 class PackageScopeTests(unittest.TestCase):
@@ -31,3 +32,17 @@ class PackageScopeTests(unittest.TestCase):
                 verify_archive(archive, "pkg", inventory, [checksum + "  data/records.jsonl"])
             with self.assertRaises(ValueError):
                 verify_archive(archive, "pkg", inventory, ["0" * 64 + "  data/records.jsonl"])
+
+    def test_combining_versions_with_overlapping_months_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            history, recent = root / "history", root / "recent"
+            locations = [(history / "by-year" / str(year), f"{year}01") for year in range(2011, 2025)]
+            locations += [(history, "202501"), (recent, "202501")]
+            for storage, month in locations:
+                path = storage / "runs/example/run.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps({"status": "finalized", "version_complete": True,
+                    "audit_passed": True, "run_id": "example", "config": {"contract_months": [month]}}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "overlap"):
+                select_scopes(history, recent)
