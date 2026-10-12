@@ -49,6 +49,8 @@
 
 新交付包目录：`data/work/share-packages/nestlinker-worldmodel-collected-20261012`；ZIP 同名。包含 16 个按合同月份不重叠的标准化数据段、3 个独立公开背景快照、中文说明、来源目录证据、月份/来源计数、可选字段缺失数和 SHA-256 清单。
 
+实际完成校验：49 个 ZIP 成员，压缩包 500,811,565 字节，解压目录 4,342,061,301 字节；整包 SHA-256 为 `15812ca017d24eca942c08dfac967a99402583aa4b745a9d2d42569ce764e8f3`，与 `.zip.sha256` 一致。16 段实际行数合计 6,103,069，覆盖 2011-01 至 2026-10；3 个背景快照、9 个有快照证据的来源和 15 个年度 ZIP 台账哈希均已核对。
+
 打包范围根据实际 run 配置计算，拒绝范围有洞或月份重叠，检查导出与输入 manifest 绑定。ZIP 生成后逐个读取压缩成员，核对所有哈希、清单和 JSONL 行数，全部通过才生成整包校验文件。原始 XML、年度 ZIP、密钥、带密钥 URL 和失败批次明细不放入交付包；包仍按受控标准化明细分享，不自动公开入库。
 
 分类清单位于 `data/work/worldmodel-inventory/2026-10-12-final.json`。近期审计位于 `data/work/rtms-version-audit/2026-10-12-catchup`，历史审计位于 `data/work/rtms-history-audit/2026-10-12-recheck`。详细指纹审计只留本机。
