@@ -365,6 +365,15 @@ def command_export_rtms_observation(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_compile_price_features(args: argparse.Namespace) -> int:
+    from .price_features import compile_price_features
+    result = compile_price_features(Path(args.input_package), Path(args.output_dir), args.minimum_count)
+    print(json.dumps({key: result[key] for key in (
+        "source_record_count", "feature_group_count", "represented_source_rows", "suppressed_source_rows"
+    )}))
+    return 0
+
+
 def command_observe_rtms(args: argparse.Namespace) -> int:
     key = service_key_from_env()
     if not key:
@@ -654,6 +663,11 @@ def parser() -> argparse.ArgumentParser:
     export.add_argument("--run-id", required=True)
     export.add_argument("--output-dir", required=True)
     export.set_defaults(handler=command_export_rtms_observation)
+    features = sub.add_parser("compile-rtms-features", help="compile descriptive API price features from a verified local package")
+    features.add_argument("--input-package", required=True)
+    features.add_argument("--output-dir", required=True)
+    features.add_argument("--minimum-count", type=int, default=10)
+    features.set_defaults(handler=command_compile_price_features)
     annual = sub.add_parser("observe-seoul-annual-files", help="record annual ZIP versions separately from RTMS")
     annual.add_argument("--input-dir", required=True)
     annual.add_argument("--storage-root", default="data/raw/rtms-observations")

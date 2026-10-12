@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-09-03",
+  "updated_at": "2026-10-12",
   "scope": "Public data useful to foreign renters in Korea; source discovery is broad, snapshot admission is strict.",
   "datasets": [
     {
@@ -87,7 +87,8 @@
       "category": "market",
       "title": "韩国不动产院全国住宅租金/全租价格指数",
       "provider": "韩国不动产院",
-      "landing_url": "https://www.data.go.kr/dataset/15002289/openapi.do",
+      "landing_url": "https://www.reb.or.kr/r-one/portal/main/indexPage.do",
+      "historical_landing_urls": ["https://www.data.go.kr/dataset/15002289/openapi.do"],
       "access": "api_key",
       "license": "public-data-portal-source-terms",
       "geography": "national and regional",
@@ -95,7 +96,7 @@
       "model_use": ["market trend", "time adjustment"],
       "status": "cataloged",
       "privacy": "aggregate",
-      "quality_notes": "sample survey index; not a price level for a specific property"
+      "quality_notes": "sample survey index, not property price level; R-ONE API has a separate KEY and unauthenticated sample mode is truncated"
     },
     {
       "id": "reb-housing-transactions",
@@ -265,17 +266,17 @@
     {
       "id": "hug-guarantee-accidents-region",
       "category": "deposit-risk",
-      "title": "HUG 地区别全租保证金返还保证事故",
+      "title": "HUG 年度各保证品种事故统计（全国聚合）",
       "provider": "住宅都市保证公社",
       "landing_url": "https://www.data.go.kr/data/15002597/fileData.do",
       "access": "public_download",
       "license": "public-data-portal-source-terms",
-      "geography": "regional aggregate",
+      "geography": "national annual guarantee-product aggregates; no regional key in collected CSV",
       "cadence": "annual",
       "model_use": ["systemic deposit-risk trend", "education"],
       "status": "cataloged",
       "privacy": "aggregate",
-      "quality_notes": "never apply regional accident rate to an individual landlord or property"
+      "quality_notes": "2026-10-12 CSV has year/product/count/amount columns and no district field; annual accident flow and guarantee stock are different denominators, not individual deposit-return labels"
     },
     {
       "id": "hug-return-guarantee",
@@ -456,6 +457,22 @@
       "status": "cataloged",
       "privacy": "aggregate",
       "quality_notes": "balance trends do not determine an individual lease's eligibility or safety"
+    },
+    {
+      "id": "bok-base-rate",
+      "category": "market",
+      "title": "韩国央行基准利率历史变更表",
+      "provider": "韩国银行",
+      "landing_url": "https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643",
+      "discovered_at": "2026-10-12",
+      "access": "public_download",
+      "license": "official-website-terms-review-before-publication",
+      "geography": "national macro context",
+      "cadence": "on monetary-policy changes",
+      "model_use": ["macro regime context", "price baseline explanatory features"],
+      "status": "cataloged",
+      "privacy": "aggregate policy rate",
+      "quality_notes": "effective date is not first publication time; policy rate is not an individual deposit-loan offer; 61 observed rows are local candidate data, not a seeded public snapshot"
     },
     {
       "id": "housing-lease-protection-law",
