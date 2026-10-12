@@ -58,13 +58,25 @@ def inventory(repo):
                         "catalog_status": item["status"], "access": item["access"],
                         "snapshot_file_evidence": item["id"] in evidence_sources,
                         "official_url": item["landing_url"]} for item in catalog["datasets"]]
+    annual_ledger = load(repo / "data/acquisitions/2026-09-05/seoul-rental-files.json")
+    annual_files = []
+    for entry in annual_ledger["files"]:
+        year = entry.get("file_year", entry.get("contract_year"))
+        raw_path = repo / "data/raw/seoul-rental-files/2026-09-05" / f"seoul-rents-{year}.zip"
+        exists = raw_path.is_file()
+        annual_files.append({"file_year": year, "local_file_present": exists,
+                             "bytes_hash_match_ledger": bool(exists and raw_path.stat().st_size == entry["bytes"]
+                                                             and sha256_file(raw_path) == entry["sha256"]),
+                             "relative_path": raw_path.relative_to(repo).as_posix(),
+                             "expected_sha256": entry["sha256"], "expected_bytes": entry["bytes"],
+                             "public_release_eligible": False})
     return {"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
             "catalog_source_count": len(dataset_entries),
             "catalog_status_counts": dict(Counter(x["catalog_status"] for x in dataset_entries)),
             "snapshot_count": len(snapshots), "snapshot_evidenced_source_count": len(evidence_sources),
             "registered_sources": dataset_entries, "snapshots": snapshots,
             "recent_runs": recent, "historical_api_runs": history,
-            "annual_zip_ledger": load(repo / "data/acquisitions/2026-09-05/seoul-rental-files.json"),
+            "annual_zip_ledger": annual_ledger, "annual_zip_files": annual_files,
             "quarantined_annual_2025": load(repo / "data/quarantine/2026-09-03/seoul-rents-2025.audit.json"),
             "limitations": ["Catalog registration alone is not evidence of collection or admission.",
                             "Snapshot record counts have different units and overlapping scopes; do not sum as contracts.",
