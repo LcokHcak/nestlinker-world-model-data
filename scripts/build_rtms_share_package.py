@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from worldmodel_data.observation_export import export_observation
+from scripts.inventory_worldmodel_data import inventory as worldmodel_inventory
 
 
 SOURCES = [
@@ -70,10 +71,37 @@ def verify_export(export: Path, run_id: str) -> dict:
     return value
 
 
+def scope_from_run(run: dict) -> tuple[str, str, str]:
+    months = sorted(set(run["config"]["contract_months"]))
+    if not months:
+        raise ValueError("run has no selected contract months")
+    indices = [int(month[:4]) * 12 + int(month[4:]) - 1 for month in months]
+    if indices != list(range(indices[0], indices[-1] + 1)):
+        raise ValueError("package scope must be contiguous; cannot claim missing months")
+    start, end = months[0][:4] + "-" + months[0][4:], months[-1][:4] + "-" + months[-1][4:]
+    return start + "_to_" + end, start, end
+
+
+def select_scopes(history: Path, recent: Path) -> list:
+    scopes = []
+    seen = set()
+    for storage in [history / "by-year" / str(y) for y in range(2011, 2025)] + [history, recent]:
+        run_id, run = complete_run(storage)
+        label, start, end = scope_from_run(run)
+        months = set(run["config"]["contract_months"])
+        if seen & months:
+            raise ValueError("selected runs overlap in contract months; do not add observation versions")
+        seen.update(months)
+        if start[5:] == "01" and end == start[:4] + "-12":
+            label = start[:4]
+        scopes.append((label, start, end, storage, run_id, run))
+    return scopes
+
+
 def ensure_export(storage: Path, run_id: str, export: Path, search_root: Path) -> tuple[dict, Path]:
     if (export / "manifest.json").is_file():
         return verify_export(export, run_id), export
-    for candidate in search_root.glob("*/manifest.json"):
+    for candidate in search_root.rglob("manifest.json"):
         value = read_json(candidate)
         if value.get("run_id") == run_id:
             return verify_export(candidate.parent, run_id), candidate.parent
@@ -86,22 +114,22 @@ def build(args: argparse.Namespace) -> tuple[Path, Path]:
     recent = (repo / args.recent_storage).resolve()
     export_root = (repo / args.export_root).resolve()
     package = (repo / args.output_dir).resolve()
+    if not any(package.parts[i:i + 2] == ("data", "work") for i in range(len(package.parts) - 1)):
+        raise ValueError("controlled packages must be under data/work")
     if package.exists():
         raise FileExistsError(f"package output already exists: {package}")
     package.mkdir(parents=True)
     inventory = []
 
-    scopes = []
-    for year in range(2011, 2025):
-        storage = history / "by-year" / str(year)
-        scopes.append((str(year), f"{year}-01", f"{year}-12", storage))
-    scopes.append(("2025-01_to_2025-09", "2025-01", "2025-09", history))
-    scopes.append(("2025-10_to_2026-09", "2025-10", "2026-09", recent))
+    scopes = select_scopes(history, recent)
 
-    for label, start, end, storage in scopes:
-        run_id, run = complete_run(storage)
-        export_dir = export_root / label
+    for label, start, end, storage, run_id, run in scopes:
+        export_dir = export_root / (label + "_" + run_id)
         manifest, actual_export = ensure_export(storage, run_id, export_dir, export_root.parent)
+        if manifest["input_manifest_sha256"] != sha256(storage / "runs" / run_id / "run.json"):
+            raise ValueError("export is not bound to selected source manifest")
+        if manifest["record_count"] != run["normalized_record_count"]:
+            raise ValueError("export count differs from source run")
         records_source = actual_export / "records.jsonl"
         records_target = package / "data" / label / "records.jsonl"
         link_or_copy(records_source, records_target)
@@ -111,6 +139,10 @@ def build(args: argparse.Namespace) -> tuple[Path, Path]:
             "run_id": run_id, "observed_at": run["observed_at"],
             "record_count": manifest["record_count"],
             "counts_by_source": manifest["counts_by_source"],
+            "counts_by_contract_month": manifest["counts_by_contract_month"],
+            "missing_field_counts": manifest["missing_field_counts"],
+            "complete_partition_count": run["complete_partition_count"],
+            "input_manifest_sha256": manifest["input_manifest_sha256"],
             "sha256": manifest["files"][0]["sha256"], "bytes": manifest["files"][0]["bytes"],
             "relative_path": f"data/{label}/records.jsonl",
         }
@@ -118,15 +150,34 @@ def build(args: argparse.Namespace) -> tuple[Path, Path]:
         print(label, item["record_count"], flush=True)
 
     total = sum(item["record_count"] for item in inventory)
+    coverage_start = min(item["contract_month_start"] for item in inventory)
+    coverage_end = max(item["contract_month_end"] for item in inventory)
+    recent_observed_at = inventory[-1]["observed_at"]
+    context = []
+    if args.include_worldmodel:
+        context_inventory = worldmodel_inventory(repo)
+        write_text_lf(package / "worldmodel-inventory.json", json.dumps(context_inventory, ensure_ascii=False, indent=2) + "\n")
+        for snap in context_inventory["snapshots"]:
+            manifest_path = repo / snap["manifest_path"]
+            relative_dir = Path("context") / snap["snapshot_id"]
+            dest = package / relative_dir
+            dest.mkdir(parents=True)
+            shutil.copy2(manifest_path, dest / "manifest.json")
+            for item in snap["files"]:
+                shutil.copy2(manifest_path.parent / item["path"], dest / item["path"])
+            context.append({"snapshot_id": snap["snapshot_id"], "relative_dir": relative_dir.as_posix(),
+                            "files": snap["files"], "manifest_sha256": snap["manifest_sha256"]})
     package_manifest = {
         "schema_version": 1, "package_id": args.package_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "classification": "controlled_normalized_transaction_records",
         "geography": "Seoul, 25 districts", "record_count": total,
+        "contract_month_coverage": {"start": coverage_start, "end": coverage_end},
         "sources": [{"property_type": name, "official_url": url,
                      "portal_license": "no_restriction_as_checked_2026-09-28"} for name, url in SOURCES],
         "datasets": inventory,
-        "excluded": ["API credentials", "raw XML responses", "request URLs", "failed/incomplete runs",
+        "context_snapshots": context,
+        "excluded": ["API credentials", "raw XML responses", "credential-bearing request URLs", "failed/incomplete run records",
                      "annual ZIP source files", "content fingerprint audit details"],
         "public_release_eligible": False,
     }
@@ -141,7 +192,7 @@ def build(args: argparse.Namespace) -> tuple[Path, Path]:
 
 Package: `{args.package_id}`  
 Records: **{total:,}** source occurrences  
-Coverage: contract months 2011-01 through 2026-09, Seoul 25 districts  
+Coverage: contract months {coverage_start} through {coverage_end}, Seoul 25 districts
 Sources: apartment, officetel, single/multi-family rental APIs from Korea MOLIT via DATA.GO.KR
 
 ## Start here
@@ -160,7 +211,7 @@ Rows are source occurrences, not confirmed unique contracts. `id` and `content_f
 
 Amounts are in 10,000 KRW (`*_manwon`). Explicit zero is valid; missing values were not converted to zero. `exclusive_area_sqm` and `reported_area_sqm` must be interpreted with `reported_area_basis`. For single/multi-family rows, `source_totalFloorAr` is not an apartment-style exclusive area. Missing optional fields remain null.
 
-Historical years are first observed baselines collected on 2026-09-14. They do not reconstruct historical as-of availability or reporting delay. The recent scope is the complete version observed on 2026-09-27 UTC (2026-09-28 Asia/Seoul). Do not add other observation versions to these files as extra transactions.
+Observation timestamps are listed for every selected run in inventory.csv. Historical contract years do not reconstruct historical as-of availability or reporting delay. The recent scope is the complete version observed at {recent_observed_at}. Do not add other observation versions to these files as extra transactions.
 
 ## Data fields
 
@@ -173,13 +224,15 @@ Historical years are first observed baselines collected on 2026-09-14. They do n
 - `run_id`, `id`, `content_fingerprint`
 
 No deposit-return, move-out, dispute, tenant, safety-score or loss-outcome events are included. This package alone cannot train or validate RDRC.
+
+When present, `context/` contains separately admitted public snapshots (population, regional keys, gosiwon registry, subway anchors, rental examples and annual rental aggregates). `worldmodel-inventory.json` distinguishes registered-only sources from stored evidence. Context snapshots overlap the RTMS scopes and each other; their counts are not added to the package's normalized-record total.
 """
     write_text_lf(package / "README.md", readme)
     readme_zh = f"""# NestLinker 首尔 RTMS 受控数据交付包
 
 交付包：`{args.package_id}`  
 记录数：**{total:,}** 条来源记录出现次数  
-范围：首尔 25 个行政区，合同月份 2011-01 至 2026-09  
+范围：首尔 25 个行政区，合同月份 {coverage_start} 至 {coverage_end}
 来源：韩国国土交通部公寓、办公住宅、独栋／多户住宅租赁实价 API
 
 ## 文件怎么用
@@ -221,15 +274,16 @@ with path.open(encoding="utf-8") as rows:
 - `first_seen_at` 在首次基线中保持 null，不能用合同日期或导出日期代填。
 - 押金和月租单位为万韩元；显式 0 有效，缺失值没有转成 0。
 - 独栋／多户的 `source_totalFloorAr` 不等同于公寓专有面积，应结合 `reported_area_basis` 使用。
-- 历史数据是在 2026-09-14 首次观察到的历史基线，不能还原过去任意日期的 as-of 状态或真实迟报时间。
+- 各批次真实观察时间见 inventory.csv；近期版本观察时间为 {recent_observed_at}。历史合同年份不能还原过去任意日期的 as-of 状态或真实迟报时间。
 - 不包含退租、押金返还、纠纷、租客身份、损失结果或安全评分，不能单独训练或验证 RDRC。
 
 官方来源链接见 `inventory.json`。英文说明见 `README.md`。
+
+若包内存在 `context/`，其中是另外分类的公开快照（人口、地区连接、考试院登记、地铁锚点、租赁示例及年度聚合）。`worldmodel-inventory.json` 区分“已登记”与“有实际文件证据”。这些快照与 API 及彼此可能重叠，其数量未累加到明细总数。隔离的 2025 年度 ZIP 只有诊断清单，不含原始内容。
 """
     write_text_lf(package / "README.zh-CN.md", readme_zh)
-    checksums = [f'{item["sha256"]}  {item["relative_path"]}' for item in inventory]
-    for name in ("README.md", "README.zh-CN.md", "inventory.json", "inventory.csv"):
-        checksums.append(f"{sha256(package / name)}  {name}")
+    checksums = [f"{sha256(path)}  {path.relative_to(package).as_posix()}"
+                 for path in sorted(package.rglob("*")) if path.is_file()]
     write_text_lf(package / "SHA256SUMS.txt", "\n".join(checksums) + "\n")
 
     archive = package.with_suffix(".zip")
@@ -239,9 +293,31 @@ with path.open(encoding="utf-8") as rows:
         for path in sorted(package.rglob("*")):
             if path.is_file():
                 bundle.write(path, Path(package.name) / path.relative_to(package))
+    verify_archive(archive, package.name, inventory, checksums)
     archive_hash = sha256(archive)
     write_text_lf(archive.with_suffix(".zip.sha256"), f"{archive_hash}  {archive.name}\n")
     return package, archive
+
+
+def verify_archive(archive: Path, root_name: str, inventory: list, checksums: list) -> None:
+    """Read all compressed bytes; validate hashes and actual JSONL line counts."""
+    expected_counts = {item["relative_path"]: item["record_count"] for item in inventory}
+    expected_hashes = dict(line.split("  ", 1)[::-1] for line in checksums)
+    with zipfile.ZipFile(archive) as bundle:
+        names = bundle.namelist()
+        expected_names = {root_name + "/" + path for path in expected_hashes} | {root_name + "/SHA256SUMS.txt"}
+        if len(names) != len(set(names)) or set(names) != expected_names:
+            raise ValueError("archive membership differs from allowlisted package files")
+        for path, expected in expected_hashes.items():
+            digest, line_count = hashlib.sha256(), 0
+            with bundle.open(root_name + "/" + path) as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+                    line_count += block.count(b"\n")
+            if digest.hexdigest() != expected:
+                raise ValueError("archived file hash mismatch: " + path)
+            if path in expected_counts and line_count != expected_counts[path]:
+                raise ValueError("archived JSONL row count mismatch: " + path)
 
 
 def main() -> int:
@@ -251,6 +327,7 @@ def main() -> int:
     parser.add_argument("--export-root", default="data/work/rtms-normalized/share-package")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--package-id", default="nestlinker-seoul-rtms-2011-2026-20260928")
+    parser.add_argument("--include-worldmodel", action="store_true", help="include verified public context snapshots and catalog evidence inventory")
     args = parser.parse_args()
     package, archive = build(args)
     print(package, flush=True)
